@@ -1,0 +1,9 @@
+{
+  "calibration_seconds": 30,
+  "udp_port": 5005,
+  "nodes": [
+    {"name": "node-living", "zone": "Living room", "ip": "192.168.1.51"},
+    {"name": "node-bed",    "zone": "Bedroom",     "ip": "192.168.1.52"},
+    {"name": "node-usb",    "zone": "Office",      "serial": "/dev/ttyUSB0"}
+  ]
+}

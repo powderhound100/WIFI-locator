@@ -1,0 +1,5 @@
+numpy
+aiohttp
+pyserial   # optional: only for USB-attached ESP32 nodes
+pytest
+pytest-aiohttp

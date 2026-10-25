@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Motion</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1b1f24; --mute:#6b7380; --line:#e3e6eb; --idle:#2f9e6b; --move:#e5484d; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151a; --card:#1b2028; --fg:#e8ebf0; --mute:#8d97a6; --line:#2a313c; --idle:#3dd68c; --move:#ff6369; }
+  }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:15px system-ui, sans-serif; }
+  header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; max-width:960px; margin:0 auto 16px; }
+  h1 { font-size:20px; margin:0; }
+  button { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 14px; font:inherit; cursor:pointer; }
+  #status { color:var(--mute); }
+  #zones { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; max-width:960px; margin:0 auto; }
+  .zone { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .zone.moving { border-color:var(--move); }
+  .name { font-weight:600; }
+  .state { margin:6px 0 10px; color:var(--idle); font-weight:600; }
+  .moving .state { color:var(--move); }
+  .bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; }
+  .fill { height:100%; width:0; background:var(--idle); transition:width .25s; }
+  .moving .fill { background:var(--move); }
+  .meta { margin-top:8px; font-size:12px; color:var(--mute); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Home motion</h1>
+  <span id="status">connecting…</span>
+  <button id="cal">Recalibrate (leave rooms still)</button>
+</header>
+<main id="zones"></main>
+<script>
+const zonesEl = document.getElementById('zones'), statusEl = document.getElementById('status');
+function render(s) {
+  statusEl.textContent = s.calibrating ? 'Calibrating — keep the house still…' : 'Live';
+  zonesEl.replaceChildren(...Object.entries(s.zones).map(([name, z]) => {
+    const d = document.createElement('div');
+    d.className = 'zone' + (z.moving ? ' moving' : '');
+    const pct = Math.min(100, z.level * 50);   // threshold sits at 50%
+    d.innerHTML = '<div class="name"></div><div class="state"></div><div class="bar"><div class="fill"></div></div><div class="meta"></div>';
+    d.querySelector('.name').textContent = name;
+    d.querySelector('.state').textContent = s.calibrating ? 'Calibrating' : z.moving ? 'Motion' : 'Still';
+    d.querySelector('.fill').style.width = pct + '%';
+    d.querySelector('.meta').textContent = z.links + ' link(s) · level ' + z.level.toFixed(2) + '× threshold';
+    return d;
+  }));
+}
+function connect() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  ws.onmessage = e => render(JSON.parse(e.data));
+  ws.onclose = () => { statusEl.textContent = 'disconnected — retrying…'; setTimeout(connect, 2000); };
+}
+document.getElementById('cal').onclick = () => fetch('/api/calibrate', { method: 'POST' });
+connect();
+</script>
+</body>
+</html>

@@ -51,3 +51,35 @@ def test_recalibrate_resets_state():
     t = run(eng, sim, 0, 7)
     eng.calibrate()
     assert eng.calibrating and eng.snapshot(t)["zones"]["a"]["level"] == 0
+
+
+def test_parse_rssi_and_tshark_lines():
+    from wifi_locator.csi import parse_rssi_line, parse_tshark_line
+
+    f = parse_rssi_line("RSSI,AA:BB:CC:DD:EE:FF,-52.0", "pc1", 1.0)
+    assert f.tx == "aa:bb:cc:dd:ee:ff" and f.rssi == -52 and f.amp.size == 1
+    g = parse_tshark_line("aa:bb:cc:dd:ee:01\t-61,-63\n", "mon", 1.0)
+    assert g.rssi == -61
+    assert parse_tshark_line("\t-61\n", "mon", 1.0) is None
+    assert parse_rssi_line("garbage", "n", 0) is None
+
+
+def test_rssi_links_detect_motion():
+    from wifi_locator.csi import rssi_frame
+
+    rng = np.random.default_rng(0)
+    eng = MotionEngine(calib_seconds=20)
+    t = 0.0
+
+    def feed(seconds, swing):
+        nonlocal t
+        for _ in range(int(seconds * 10)):
+            t += 0.1
+            eng.feed(rssi_frame("router", "aa:00:00:00:00:09", t, -50 + rng.normal(0, 0.4) + rng.normal(0, swing)))
+
+    feed(22, 0)
+    assert not eng.calibrating
+    feed(8, 0)
+    assert not eng.snapshot(t)["zones"]["router"]["moving"]
+    feed(8, 4)  # a person walking through the path swings RSSI by several dB
+    assert eng.snapshot(t)["zones"]["router"]["moving"]

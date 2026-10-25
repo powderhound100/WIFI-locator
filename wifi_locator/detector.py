@@ -29,16 +29,23 @@ class LinkScorer:
     def push(self, amp: np.ndarray) -> float | None:
         if self._buf and amp.shape != self._buf[0].shape:
             self._buf.clear()  # mode change (e.g. HT20 -> legacy)
-        mean = amp.mean()
-        if mean <= 0:
-            return None
-        # dividing by the frame mean cancels AGC / transmit-power jumps
-        self._buf.append(amp / mean)
+        if amp.size == 1:
+            # RSSI: nothing to normalise per frame; normalised over the window below
+            self._buf.append(amp.astype(np.float64))
+        else:
+            mean = amp.mean()
+            if mean <= 0:
+                return None
+            # dividing by the frame mean cancels AGC / transmit-power jumps
+            self._buf.append(amp / mean)
         self._since += 1
         if len(self._buf) < self.window or self._since < self.stride:
             return None
         self._since = 0
         m = np.stack(self._buf)
+        if m.shape[1] == 1:  # RSSI: coefficient of variation of linear amplitude
+            mean = m.mean()
+            return float(m.std() / mean) if mean > 0 else None
         live = m.mean(axis=0) > 0.05  # skip null/guard subcarriers
         if not live.any():
             return None
@@ -75,6 +82,7 @@ class MotionEngine:
     ):
         self.zone_of = zones if zones is not None else {}
         self.window, self.stride = window, stride
+        self.rssi_window, self.rssi_stride = 20, 5
         self.calib_seconds, self.k, self.smoothing = calib_seconds, k, smoothing
         self.links: dict[tuple[str, str], LinkState] = {}
         self._calib_start: float | None = None
@@ -91,9 +99,9 @@ class MotionEngine:
     def feed(self, f: CsiFrame) -> None:
         ls = self.links.get((f.node, f.tx))
         if ls is None:
-            ls = self.links[(f.node, f.tx)] = LinkState(
-                f.node, f.tx, LinkScorer(self.window, self.stride)
-            )
+            # RSSI arrives ~10x slower than CSI, so it gets a shorter window
+            w, st = (self.rssi_window, self.rssi_stride) if f.amp.size == 1 else (self.window, self.stride)
+            ls = self.links[(f.node, f.tx)] = LinkState(f.node, f.tx, LinkScorer(w, st))
         ls.last_ts, ls.rssi = f.ts, f.rssi
         raw = ls.scorer.push(f.amp)
         if raw is None:

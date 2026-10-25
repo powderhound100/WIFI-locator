@@ -10,26 +10,29 @@ python -m wifi_locator --config config.json
 python -m pytest
 ```
 
-## The hardware catch
+## Using the devices you already have
 
-Your phones, laptops, TVs and router compute CSI internally but **do not expose
-it**: stock firmware and OS drivers hide it. So "just use the devices I already
-have" can't work by software alone. What *does* work:
+Be clear about what each device can do. **CSI** (per-subcarrier channel data) is
+the best signal, but stock routers, PCs and smart TVs don't expose it. **RSSI**
+(one signal-strength number per frame) is available on nearly everything, and is
+what the zero-new-hardware modes below use. It is coarser: expect to detect
+people moving through or near a link, not subtle motion.
 
-- **Existing devices as transmitters, a small sniffer as receiver.** CSI can be
-  extracted from *any* frame a CSI-capable radio overhears, so the sniffer
-  doesn't need to join anything. Your existing devices' normal traffic becomes
-  the signal source, and each link is `(sniffer node, transmitting MAC)`.
-- **Sniffer options:** an ESP32 ($5-10, the `esp-csi` firmware; promiscuous
-  mode with CSI callback) per area, or a Raspberry Pi 3B+/4/5 with the Nexmon
-  CSI patch. One node per room or zone gives per-room resolution.
-- **Quiet devices give sparse data.** A TV in standby sends little. Motion
-  detection needs roughly 20+ frames/s per link, so favour chatty devices
-  (the router, streaming boxes, smart speakers) or have the node ping the router.
+| Device | Role | How |
+|---|---|---|
+| **Smart TVs, consoles, IoT** | Transmitter only. They can't run code, but any frame they send can be measured. | List their IPs under `"ping"` so they keep replying (~5 frames/s). |
+| **Router running OpenWrt** | Receiver: signal strength of every connected client | `"openwrt_host"` node; polls `iw dev wlanX station dump` over SSH (key auth). Stock firmware won't do this; check whether your model supports OpenWrt. |
+| **Linux PC with a monitor-mode adapter** | Receiver: overhears every device on the channel | `"monitor_iface"` node; needs `tshark`, root, and the adapter on your network's channel. Most USB adapters work; many built-in cards don't. |
+| **Any PC** | Receiver of its own link to the router | Run `python -m wifi_locator.agent --server <dashboard-ip>` (Linux or Windows) and add the PC as an `"ip"` node. Windows reports 1% steps, so it's the coarsest. |
+| **CSI-capable hardware** (optional upgrade) | Full CSI | ESP32 with `esp-csi`, Raspberry Pi/some Asus & Netgear routers with Nexmon CSI, Intel AX200/AX210 PCs with PicoScenes. Same dashboard, much better sensitivity. |
 
-I haven't tested against real ESP32 hardware in this session. The parser targets
-the documented `CSI_DATA,...,"[i,q,...]"` line format from `esp-csi`; check your
-firmware version's column layout if frames don't show up.
+Each (receiver, transmitting device) pair is a link, and each node maps to a
+zone. More links crossing a room means better coverage: put receivers in
+different rooms rather than all in one.
+
+**Not yet tested against real hardware** (no router, PC adapter or ESP32 in this
+session). The parsers are covered by unit tests on sample lines, and the
+detector by simulation. Expect to tune `k` and the window on your own network.
 
 ## How it works
 
@@ -40,19 +43,20 @@ firmware version's column layout if frames don't show up.
 | Calibrate | same | first 30 s (or press *Recalibrate*) learns each link's empty-house score; threshold = mean + 5σ, with hysteresis |
 | Zones | same | links roll up to the zone of their receiving node; zone level = worst link |
 | Serve | `wifi_locator/server.py`, `static/index.html` | WebSocket push at 4 Hz |
-| Sources | `wifi_locator/sources.py` | simulator, UDP, serial |
+| Sources | `wifi_locator/sources.py`, `agent.py` | simulator, UDP, serial, tshark monitor, OpenWrt SSH, pinger |
 
-## Setting up real nodes
+## Setting up
 
-1. Flash each ESP32 with an `esp-csi` receiver build that prints CSI lines.
-2. Copy `config.example.json` to `config.json`. For USB-connected nodes set
-   `"serial"`; for networked nodes set `"ip"` and forward the lines as UDP to
-   port 5005. Map each node to a `zone` name.
-3. Start with the house still so calibration learns "empty", then walk around.
+1. `cp config.example.json config.json`, then keep only the nodes you have.
+2. Router: enable SSH key login from the dashboard machine, set `openwrt_host`.
+3. Monitor PC: `sudo ip link set wlan1 down && sudo iw wlan1 set monitor none && sudo ip link set wlan1 up && sudo iw wlan1 set channel <your channel>`, then run the dashboard as root.
+4. Start the dashboard with the house still so calibration learns "empty", then walk around.
+5. ESP32 nodes (CSI): flash `esp-csi`, send lines over UDP to port 5005 or attach via `"serial"`.
 
 ## Limits
 
 - This detects *motion* near each node's links. It does not give coordinates.
   Locating someone more precisely needs multiple nodes and trained models.
+- RSSI mode is much noisier than CSI; walls between receiver and transmitter weaken both.
 - Pets, fans, and swaying curtains move the channel too. Raising `k` reduces false alarms.
 - Sensing people in a home is privacy-sensitive; tell housemates and guests.

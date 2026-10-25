@@ -8,7 +8,7 @@ from aiohttp import web
 
 from .detector import MotionEngine
 from .server import make_app
-from .sources import Simulator, run_serial, run_simulator, run_udp
+from .sources import Simulator, run_monitor, run_openwrt, run_pinger, run_serial, run_simulator, run_udp
 
 
 def main() -> None:
@@ -36,6 +36,12 @@ def main() -> None:
         for n in cfg["nodes"]:
             if "serial" in n:
                 sources.append(run_serial(sink, n["serial"], n["name"]))
+            if "monitor_iface" in n:
+                sources.append(run_monitor(sink, n["monitor_iface"], n["name"]))
+            if "openwrt_host" in n:
+                sources.append(run_openwrt(sink, n["openwrt_host"], n["name"], n.get("interfaces", ["wlan0"])))
+        if cfg.get("ping"):
+            sources.append(run_pinger(cfg["ping"]))
 
     web.run_app(make_app(engine, sources), host=a.host, port=a.port)
 

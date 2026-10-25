@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Callable
 
 import numpy as np
 
-from .csi import CsiFrame, parse_esp32_line
+from .csi import CsiFrame, parse_esp32_line, parse_rssi_line, parse_tshark_line, rssi_frame
 
 Sink = Callable[[CsiFrame], None]
 
@@ -68,7 +69,8 @@ class _UdpProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data: bytes, addr) -> None:
         node = self.nodes.get(addr[0], addr[0])
         for line in data.decode(errors="ignore").splitlines():
-            f = parse_esp32_line(line, node, time.monotonic())
+            ts = time.monotonic()
+            f = parse_esp32_line(line, node, ts) or parse_rssi_line(line, node, ts)
             if f:
                 self.sink(f)
 
@@ -94,3 +96,51 @@ async def run_serial(sink: Sink, path: str, node: str, baud: int = 921600) -> No
             if f:
                 sink(f)
         await asyncio.sleep(0.005)
+
+
+async def _lines(*cmd: str):
+    """Yield stdout lines of a long-running subprocess."""
+    p = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    try:
+        while (raw := await p.stdout.readline()):
+            yield raw.decode(errors="ignore")
+    finally:
+        if p.returncode is None:
+            p.terminate()
+
+
+async def run_monitor(sink: Sink, iface: str, node: str) -> None:
+    """RSSI of every frame the PC's monitor-mode adapter overhears (needs tshark, root).
+    The adapter must sit on the same channel as your network."""
+    async for line in _lines("tshark", "-l", "-i", iface, "-T", "fields", "-e", "wlan.ta", "-e", "radiotap.dbm_antsignal"):
+        f = parse_tshark_line(line, node, time.monotonic())
+        if f:
+            sink(f)
+
+
+_STATION = re.compile(r"^Station ([0-9a-f:]{17})", re.I)
+_SIGNAL = re.compile(r"^\s+signal:\s+(-?\d+)")
+
+
+async def run_openwrt(sink: Sink, host: str, node: str, ifaces: list[str], user: str = "root") -> None:
+    """Per-client signal strength from an OpenWrt router over SSH (key auth)."""
+    loop = "while true; do " + " ".join(f"iw dev {i} station dump;" for i in ifaces) + " sleep 0.2; done"
+    mac = None
+    async for line in _lines("ssh", "-o", "BatchMode=yes", f"{user}@{host}", loop):
+        if m := _STATION.match(line):
+            mac = m.group(1)
+        elif mac and (m := _SIGNAL.match(line)):
+            sink(rssi_frame(node, mac, time.monotonic(), int(m.group(1))))
+
+
+async def run_pinger(targets: list[str], interval: float = 0.2) -> None:
+    """Keep quiet devices (smart TVs) transmitting by pinging them; 0.2s is the non-root minimum."""
+    procs = [
+        await asyncio.create_subprocess_exec("ping", "-i", str(interval), "-q", t, stdout=asyncio.subprocess.DEVNULL)
+        for t in targets
+    ]
+    try:
+        await asyncio.Event().wait()
+    finally:
+        for p in procs:
+            p.terminate()

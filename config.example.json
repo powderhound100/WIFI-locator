@@ -1,9 +1,11 @@
 {
   "calibration_seconds": 30,
   "udp_port": 5005,
+  "ping": ["192.168.1.30", "192.168.1.31"],
   "nodes": [
-    {"name": "node-living", "zone": "Living room", "ip": "192.168.1.51"},
-    {"name": "node-bed",    "zone": "Bedroom",     "ip": "192.168.1.52"},
-    {"name": "node-usb",    "zone": "Office",      "serial": "/dev/ttyUSB0"}
+    {"name": "router",      "zone": "Hallway",     "openwrt_host": "192.168.1.1", "interfaces": ["wlan0", "wlan1"]},
+    {"name": "pc-office",   "zone": "Office",      "ip": "192.168.1.20"},
+    {"name": "sniffer-lr",  "zone": "Living room", "monitor_iface": "wlan1mon"},
+    {"name": "esp-bedroom", "zone": "Bedroom",     "ip": "192.168.1.52"}
   ]
 }

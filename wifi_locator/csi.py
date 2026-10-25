@@ -40,3 +40,31 @@ def parse_esp32_line(line: str, node: str, ts: float) -> CsiFrame | None:
         return None
     amp = np.hypot(raw[0::2], raw[1::2])
     return CsiFrame(node=node, tx=head[2].strip().lower(), ts=ts, rssi=rssi, amp=amp)
+
+
+def rssi_frame(node: str, tx: str, ts: float, dbm: float) -> CsiFrame:
+    """Wrap an RSSI reading as a one-'subcarrier' frame (linear amplitude)."""
+    return CsiFrame(node, tx.strip().lower(), ts, int(dbm), np.array([10 ** (dbm / 20)], dtype=np.float64))
+
+
+def parse_rssi_line(line: str, node: str, ts: float) -> CsiFrame | None:
+    """`RSSI,<transmitter mac>,<dbm>` as sent by wifi_locator.agent."""
+    parts = line.strip().split(",")
+    if len(parts) != 3 or parts[0] != "RSSI":
+        return None
+    try:
+        return rssi_frame(node, parts[1], ts, float(parts[2]))
+    except ValueError:
+        return None
+
+
+def parse_tshark_line(line: str, node: str, ts: float) -> CsiFrame | None:
+    """`<wlan.ta>\t<radiotap.dbm_antsignal>` from tshark -T fields (monitor mode)."""
+    ta, _, sig = line.rstrip("\n").partition("\t")
+    if not ta or not sig:  # ACK/CTS frames carry no transmitter address
+        return None
+    try:
+        dbm = float(sig.split(",")[0])  # several values when multi-antenna
+    except ValueError:
+        return None
+    return rssi_frame(node, ta, ts, dbm)
